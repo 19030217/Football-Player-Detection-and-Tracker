@@ -24,7 +24,7 @@ net = cv2.dnn.readNetFromDarknet(config_path, weights_path)
 
 #-----------------Preparing the Image---------------------
 ###Loading an image
-path_name = "images/table.jpg"
+path_name = "images/road.jpeg"
 image = cv2.imread(path_name)
 file_name = os.path.basename(path_name)
 filename, ext = file_name.split(".")
