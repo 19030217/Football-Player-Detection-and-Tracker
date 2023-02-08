@@ -24,7 +24,7 @@ net = cv2.dnn.readNetFromDarknet(config_path, weights_path)
 
 #-----------------Preparing the Image---------------------
 ###Loading an image
-path_name = "images/road.jpeg"
+path_name = "images/0a2d9b_9_test.jpg"
 image = cv2.imread(path_name)
 file_name = os.path.basename(path_name)
 filename, ext = file_name.split(".")
@@ -55,9 +55,10 @@ time_took = time.perf_counter() - start
 print(f"Time took: {time_took:.2f}s")
 
 ###Iterating over the neural network outputs and discarding any objects with confidence less than 0.5
-font_scale = 1
+font_scale = 0.5
 thickness = 2
 boxes, confidences, class_ids = [],[],[]
+
 ###loop over each layer of outputs
 for output in layer_output:
     ###loop over each object detection
@@ -113,23 +114,69 @@ idxs = cv2.dnn.NMSBoxes(boxes,confidences, score_threshold, IoU_threshold)
 if len(idxs) > 0:
     ###loop over the indexes being kept
     for i in idxs.flatten():
-        ###extract the bounding box coords
-        x, y = boxes[i][0], boxes[i][1]
-        w, h = boxes[i][2], boxes[i][3]
-        ###draw bounding box rectangle and label
-        color = [int(c) for c in colors[class_ids[i]]]
-        cv2.rectangle(image, (x, y), (x + w, y + h), color=color, thickness=thickness)
-        text = f"{labels[class_ids[i]]}: {confidences[i]:.2f}"
-        ###Calculate text width and height to draw the transparent boxes as background of the text
-        (text_width, text_height) = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, fontScale=font_scale,thickness=thickness)[0]
-        text_offest_x = x
-        text_offset_y = y - 5
-        box_coords = ((text_offest_x,text_offset_y), (text_offest_x + text_width + 2, text_offset_y - text_height))
-        overlay = image.copy()
-        cv2.rectangle(overlay, box_coords[0], box_coords[1], color=color, thickness=cv2.FILLED)
-        ###Add opacity to box
-        image = cv2.addWeighted(overlay, 0.6, image, 0.4, 0)
-        ###Add label
-        cv2.putText(image, text, (x,y - 5), cv2.FONT_HERSHEY_SIMPLEX,
-                    fontScale=font_scale,color=(0,0,0), thickness=thickness)
-cv2.imwrite("output/" + filename + "_yolo3_NMS." + ext, image)
+        if labels[class_ids[i]] == 'person' or labels[class_ids[i]] == 'sports ball':
+            ###extract the bounding box coords
+            x, y = boxes[i][0], boxes[i][1]
+            w, h = boxes[i][2], boxes[i][3]
+            # color = [int(c) for c in colors[class_ids[i]]]
+
+            ###Get the average color of the kits
+            colors = {
+                "red": (0, 0, 255),
+                "yellow": (0, 255, 255),
+                "blue": (255, 0, 0),
+                "green": (0, 255, 0),
+                "black": (0, 0, 0),
+                "white": (255, 255, 255),
+            }
+            ###Set the lower and upper bounds of some common color ranges
+            colors_rng = {
+                "red": (np.array([0, 50, 50]), np.array([10, 255, 255])),
+                "yellow": (np.array([20, 50, 50]), np.array([30, 255, 255])),
+                #"blue": (np.array([110, 50, 50]), np.array([130, 255, 255])),
+                #"green": (np.array([50, 50, 50]), np.array([70, 255, 255])),
+                "black": (np.array([0, 0, 0]), np.array([180, 255, 30])),
+                "white": (np.array([0, 0, 200]), np.array([180, 20, 255])),
+            }
+            dominant_color = 'blue'
+            max_count = 0
+            ###Create a binary image where all pixels within the green color range are white
+            for color, (lower, upper) in colors_rng.items():
+                # Create a mask for the current color
+                mask = cv2.inRange(image, lower, upper)
+                # Count the non-black pixels in the mask
+                count = cv2.countNonZero(mask[y:y + h, x:x + w])
+                # Update the dominant color and count if necessary
+                if count > max_count:
+                    dominant_color = color
+                    max_count = count
+            kitColor = colors[dominant_color]
+
+            ###draw bounding box rectangle/ellipse and label
+            cv2.rectangle(image, (x, y), (x + w, y + h), color=kitColor, thickness=thickness)
+            cv2.ellipse(image,
+                        center=(int(x + (w / 2)), (y + h)),
+                        axes=(int(w), int(0.35 * w)),
+                        angle=0,
+                        startAngle=-45,
+                        endAngle=235,
+                        color=kitColor,
+                        thickness=thickness)
+            text = f"{labels[class_ids[i]]}"
+            cv2.putText(image, text, (x, y + int(1.5 * h)), cv2.FONT_HERSHEY_SIMPLEX,
+                        fontScale=font_scale, color=kitColor, thickness=thickness)
+
+            # text = f"{labels[class_ids[i]]}"
+            # ###Calculate text width and height to draw the transparent boxes as background of the text
+            # (text_width, text_height) = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, fontScale=font_scale,thickness=thickness)[0]
+            # text_offest_x = x
+            # text_offset_y = y - 5
+            # box_coords = ((text_offest_x,text_offset_y), (text_offest_x + text_width + 2, text_offset_y - text_height))
+            # overlay = image.copy()
+            # # cv2.rectangle(overlay, box_coords[0], box_coords[1], color=color, thickness=cv2.FILLED)
+            # # ###Add opacity to box
+            # # image = cv2.addWeighted(overlay, 0.6, image, 0.4, 0)
+            # # ###Add label
+            # # cv2.putText(image, text, (x,y - 5), cv2.FONT_HERSHEY_SIMPLEX,
+            # #             fontScale=font_scale,color=(0,0,0), thickness=thickness)
+cv2.imwrite("output/" + filename + "_yolo3." + ext, image)
