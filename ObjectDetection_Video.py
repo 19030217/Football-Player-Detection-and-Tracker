@@ -4,7 +4,6 @@ import cv2
 import time
 import os
 import imutils
-from CentroidTracker import CentroidTracker
 
 ###Defining some variables and parameters
 CONFIDENCE = 0.5
@@ -39,9 +38,6 @@ video = cv2.VideoCapture(path_name)
 writer = None
 (W, H) = (None, None)
 
-# initialize our centroid tracker and frame dimensions
-ct = CentroidTracker()
-
 file_name = os.path.basename(path_name)
 filename, ext = file_name.split(".")
 
@@ -49,16 +45,6 @@ filename, ext = file_name.split(".")
 try:
     prop = cv2.cv.CV_CAP_PROP_FRAME_COUNT if imutils.is_cv2() \
         else cv2.CAP_PROP_FRAME_COUNT
-    # def manual_count(handler):
-    #     frames = 0
-    #     while True:
-    #         status, frame = handler.read()
-    #         if not status:
-    #             break
-    #         frames += 1
-    #     return frames
-    #
-    # prop = manual_count(video)
     totalFrame = int(video.get(prop))
     print("[INFO] {} total frames in video".format(totalFrame))
 
@@ -112,7 +98,6 @@ while video.isOpened():
     ###if frame not grabbed, we have reached end of video
     if not grabbed:
         break
-
     ###if frame dimensions are empty -> grab them
     if W is None or H is None:
         (H, W) = frame.shape[:2]
@@ -146,25 +131,10 @@ while video.isOpened():
                     ###Use center coords to derive top and left corner of box
                     x = int(centerX - (width / 2))
                     y = int(centerY - (height / 2))
-                    bbox = (x, y, x + width, y + height)
-                    rects.append(bbox)
                     ###Update lists
                     boxes.append([x, y, int(width), int(height)])
                     confidences.append(float(confidence))
                     class_ids.append(class_id)
-
-        # objects = ct.update(rects)
-        #
-        # # loop over the tracked objects
-        # for x, (objectID, centroid) in enumerate(objects.items()):
-        #     if objectID > len(objects):
-        #         objectID = x
-        #     # draw both the ID of the object and the centroid of the
-        #     # object on the output frame
-        #     text = f"ID {objectID}"
-        #     cv2.putText(frame, text, (centroid[0] - 10, centroid[1] - 10),
-        #                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-        #     cv2.circle(frame, (centroid[0], centroid[1]), 4, (0, 255, 0), -1)
 
     # -------------------Non-maximal suppression--------------------
     idxs = cv2.dnn.NMSBoxes(boxes, confidences, score_threshold, IoU_threshold)
@@ -176,41 +146,7 @@ while video.isOpened():
             (x, y) = (boxes[i][0], boxes[i][1])
             (w, h) = (boxes[i][2], boxes[i][3])
 
-            ###Get the average color of the kits
-            colors = {
-                "red": (0, 0, 255),
-                "yellow": (0, 255, 255),
-                "blue": (255, 0, 0),
-                "green": (0, 255, 0),
-                "black": (0, 0, 0),
-                "white": (255, 255, 255),
-            }
-            ###Set the lower and upper bounds of some common color ranges
-            colors_rng = {
-                "red": (np.array([0, 50, 50]), np.array([10, 255, 255])),
-                "yellow": (np.array([20, 50, 50]), np.array([30, 255, 255])),
-                # "blue": (np.array([110, 50, 50]), np.array([130, 255, 255])),
-                # "green": (np.array([50, 50, 50]), np.array([70, 255, 255])),
-                "black": (np.array([0, 0, 0]), np.array([180, 255, 30])),
-                "white": (np.array([0, 0, 200]), np.array([180, 20, 255])),
-            }
-            dominant_color = 'blue'
-            max_count = 0
-            ###Create a binary image where all pixels within the green color range are white
-            for color, (lower, upper) in colors_rng.items():
-                # Create a mask for the current color
-                mask = cv2.inRange(frame, lower, upper)
-                # Count the non-black pixels in the mask
-                count = cv2.countNonZero(mask[y:y + h // 2, x:x + w])
-                # Update the dominant color and count if necessary
-                if count > max_count:
-                    dominant_color = color
-                    max_count = count
-
-            kitColor = colors[dominant_color]
-
             ###Draw bounding boxes and labels on frame
-            # color = [int(c) for c in colors[class_ids[i]]]
             cv2.ellipse(frame,
                         center=(int(x + (w / 2)), (y + h)),
                         axes=(int(w), int(0.35 * w)),
@@ -219,7 +155,6 @@ while video.isOpened():
                         endAngle=235,
                         color=(0, 255, 0),
                         thickness=thickness)
-            # cv2.rectangle(frame, (x, y), (x + w, y + h), color=kitColor, thickness=thickness)
             text = f"{labels[class_ids[i]]}"
             cv2.putText(frame, text, (x, y + int(1.5 * h)), cv2.FONT_HERSHEY_SIMPLEX,
                         fontScale=font_scale, color=(0,0,0), thickness=thickness)
