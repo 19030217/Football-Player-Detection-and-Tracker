@@ -51,11 +51,12 @@ try:
 except:
     print("Could not determine number of frames")
     totalFrame = -1
-def match_features(bbox1, bbox2):
+
+
+def match_features(bbox1, bbox2, threshold=0.1):
     # calculate the area of each bounding box
-    threshold = 0.3
-    print(f'bbox1 : {bbox1}')
-    print(f'bbox2 : {bbox2}')
+    # print(f'bbox1 : {bbox1}')
+    # print(f'bbox2 : {bbox2}')
     area1 = (bbox1[2] - bbox1[0]) * (bbox1[3] - bbox1[1])
     area2 = (bbox2[2] - bbox2[0]) * (bbox2[3] - bbox2[1])
 
@@ -64,22 +65,43 @@ def match_features(bbox1, bbox2):
     y1 = max(bbox1[1], bbox2[1])
     x2 = min(bbox1[2], bbox2[2])
     y2 = min(bbox1[3], bbox2[3])
+    # print(f'x1: {x1}, x2: {x2}, y1: {y1}, y2: {y2}')
 
     # calculate the area of the intersection rectangle
-    if x1 < x2 and y1 < y2:
-        intersection_area = (x2 - x1) * (y2 - y1)
-    else:
-        intersection_area = 0
+    intersection_area = max(0, x2 - x1) * max(0, y2 - y1)
 
     # calculate the area of union
     union_area = area1 + area2 - intersection_area
 
     # calculate the IoU
     iou = intersection_area / union_area
-    print(f'IoU : {iou}')
+    # print(f'IoU : {iou}')
 
     return iou > threshold
 
+def track(x,y,w,h, class_id):
+    newBox = [x, y, x + w, y + h]
+    matchedID = None
+    for j, obj in enumerate(uniqueObjects):
+        # time_since_seen = frameCount - obj['lastSeen']
+        if match_features(newBox, obj['box']):
+            matchedID = j
+            break
+
+    if matchedID is not None and frameCount > 0:
+        obj = uniqueObjects[matchedID]
+        obj['box'] = newBox
+        obj['lastSeen'] = frameCount
+        class_id = obj['class_id']
+    else:
+        obj = {'id': len(uniqueObjects),
+               'box': newBox,
+               'lastSeen': frameCount,
+               'class_id': class_id}
+        uniqueObjects.append(obj)
+
+    # print(obj['id'])
+    return obj
 # ----------------Frame Processing-----------------
 ###Loop over frames from video
 frameCount = -1
@@ -102,8 +124,21 @@ while video.isOpened():
     if W is None or H is None:
         (H, W) = frame.shape[:2]
 
+        # Convert the image to grayscale
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    # Create a binary mask that covers only the pitch area
+    pitch_mask = np.zeros_like(gray)
+    pitch_contour = [
+        np.array([[340, 350], [-1200, 750], [1920, 930], [1920, 350]])]  # Adjust this contour to cover the pitch area
+    cv2.drawContours(pitch_mask, pitch_contour, -1, (255, 255, 255), -1)
+
+    print(frame.shape)
+    # Apply the mask to the original image to remove everything outside the white lines
+    masked_img = cv2.bitwise_and(frame, frame, mask=pitch_mask)
+
     ###construct a blob from the frame and then perform a forward pass of the YOLO object detector
-    blob = cv2.dnn.blobFromImage(frame, 1 / 255.0, (416, 416), swapRB=True, crop=False)
+    blob = cv2.dnn.blobFromImage(masked_img, 1 / 255.0, (416, 416), swapRB=True, crop=False)
     net.setInput(blob)
     start = time.time()
     layerOutputs = net.forward(ln)
@@ -146,8 +181,34 @@ while video.isOpened():
             (x, y) = (boxes[i][0], boxes[i][1])
             (w, h) = (boxes[i][2], boxes[i][3])
 
-            ###Draw bounding boxes and labels on frame
-            cv2.ellipse(frame,
+            #--------------Color finder----------------
+            cx = int(x-(w/2))
+            cy = int(y-(h/2))
+            # roi = frame[y:y + h, x:x + w]
+            hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+            pixel_center_bbox = hsv_frame[cy, cx]
+            rgb_pixel = frame[cy,cx]
+            hue_value = pixel_center_bbox[0]
+            print(f'Hue {hue_value}')
+            print(f'HSV: {pixel_center_bbox}')
+            print(f'RGB: {rgb_pixel}')
+
+            if hue_value >= 41:
+                color = (255,0,0)
+            else:
+                color = (0,255,0)
+
+            # --------------- Tracking detections---------------------
+            obj = track(x,y,w,h, class_id)
+
+            # --------------- Birds Eye View ------------------
+            src_bbox = np.array([[350, 360],
+                                 [1920, 390],
+                                 [1920, 910],
+                                 [-1200, 750]])
+
+            ###-------------Draw bounding boxes and labels on frame-----------
+            cv2.ellipse(masked_img,
                         center=(int(x + (w / 2)), (y + h)),
                         axes=(int(w), int(0.35 * w)),
                         angle=0,
@@ -155,15 +216,16 @@ while video.isOpened():
                         endAngle=235,
                         color=(0, 255, 0),
                         thickness=thickness)
-            text = f"{labels[class_ids[i]]}"
-            cv2.putText(frame, text, (x, y + int(1.5 * h)), cv2.FONT_HERSHEY_SIMPLEX,
-                        fontScale=font_scale, color=(0,0,0), thickness=thickness)
+            if i < len(class_ids):
+                text = f"{obj['id']}"
+            cv2.putText(masked_img, text, (x, y + int(1.5 * h)), cv2.FONT_HERSHEY_SIMPLEX,
+                        fontScale=font_scale, color=(20, 20, 20), thickness=thickness)
 
     ###check if video writer is None
     if writer is None:
         ###initialise the video writer
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(("output/" + filename + "_yolo3." + ext), fourcc, 30, (frame.shape[1], frame.shape[0]))
+        writer = cv2.VideoWriter(("output/" + filename + "_yolo3." + ext), fourcc, 30, (masked_img.shape[1], masked_img.shape[0]))
 
         if totalFrame > 0:
             elap = (end - start)
@@ -171,7 +233,8 @@ while video.isOpened():
             print("[INFO] estimated total time to finish: {:.4f}".format(
                 elap * totalFrame))
     ###write the output frame to disk
-    writer.write(frame)
+    writer.write(masked_img)
+    print(f'uniqueObjects {uniqueObjects}')
 ###Relsease the file pointers
 writer.release()
 video.release()
