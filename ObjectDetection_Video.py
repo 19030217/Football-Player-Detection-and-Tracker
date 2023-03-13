@@ -31,7 +31,7 @@ except IndexError:
 
 # ----------------Video Specific tasks-----------------------
 ###Load the video
-path_name = "videos/121364_9.mp4"
+path_name = "videos/a9f16c_3.mp4"
 video = cv2.VideoCapture(path_name)
 writer = None
 (W, H) = (None, None)
@@ -79,11 +79,48 @@ def match_features(bbox1, bbox2, threshold=0):
 
     return iou > threshold
 
+def get_color(bbox, frame):
+    (x1, y1, x2, y2) = bbox
+    roi = frame[y1:y2, x1:x2]
+    hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+
+    color_ranges = {
+        'red': [(0, 70, 50), (10, 255, 255)],
+        'blue': [(90, 70, 50), (130, 255, 255)],
+        # 'yellow': [(20, 70, 50), (40, 255, 255)],
+        # 'green': [(50, 70, 50), (70, 255, 255)],
+        # 'orange': [(10, 70, 50), (20, 255, 255)],
+        'black': [(0, 0, 0), (180, 255, 50)]
+    }
+
+    max_area = 0
+    max_color = None
+    kit_color = None
+    for color, (lower, upper) in color_ranges.items():
+        mask = cv2.inRange(hsv_roi, np.array(lower), np.array(upper))
+        area = cv2.countNonZero(mask)
+        print(f'Area : {area}')
+        if area > max_area:
+            max_area = area
+            max_color = color
+
+        color_confidence = max_area / (roi.shape[0] * roi.shape[1])
+        if max_color == 'red':
+            kit_color = (0, 0, 255)
+        if max_color == 'black':
+            kit_color = (0, 0, 0)
+        if max_color == 'None':
+            kit_color = (255, 0, 0)
+
+    return kit_color, color_confidence
 
 # Function which updates the tracker by comparing bbox using matchFeatures
 def track(x, y, w, h, class_id):
     newBox = [x, y, x + w, y + h]
     matchedID = None
+
+    kColor, c_confidence = get_color(newBox, frame)
+
     for j, obj in enumerate(uniqueObjects):
         # time_since_seen = frameCount - obj['lastSeen']
         if match_features(newBox, obj['box']):
@@ -94,54 +131,19 @@ def track(x, y, w, h, class_id):
         obj = uniqueObjects[matchedID]
         obj['box'] = newBox
         obj['lastSeen'] = frameCount
-        class_id = obj['class_id']
+        obj['class_id'] = class_id
+        obj['color'] = kColor
     else:
         obj = {'id': len(uniqueObjects),
                'box': newBox,
                'lastSeen': frameCount,
-               'class_id': class_id}
+               'class_id': class_id,
+               'color': kColor}
         uniqueObjects.append(obj)
 
     # print(obj['id'])
     return obj
 
-
-# Function to find the Region of Interest (ROI)
-def roi(frame):
-    # Convert the image to grayscale
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-    # Create a binary mask that covers only the pitch area
-    pitch_mask = np.zeros_like(gray)
-    pitch_contour = [
-        np.array([[340, 350], [-1200, 750], [1920, 930], [1920, 350]])]  # Adjust this contour to cover the pitch area
-    cv2.drawContours(pitch_mask, pitch_contour, -1, (255, 255, 255), -1)
-
-    print(frame.shape)
-    # Apply the mask to the original image to remove everything outside the white lines
-    masked_img = cv2.bitwise_and(frame, frame, mask=pitch_mask)
-    return masked_img
-
-
-# Function to find the kit color
-def find_color(x, y, w, h, frame):
-    cx = int(x - (w / 2))
-    cy = int(y - (h / 2))
-    # roi = frame[y:y + h, x:x + w]
-    hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    pixel_center_bbox = hsv_frame[cy, cx]
-    rgb_pixel = frame[cy, cx]
-    hue_value = pixel_center_bbox[0]
-    print(f'Hue {hue_value}')
-    print(f'HSV: {pixel_center_bbox}')
-    print(f'RGB: {rgb_pixel}')
-
-    if hue_value >= 41:
-        color = (255, 0, 0)
-    else:
-        color = (0, 255, 0)
-
-    return color
 
 
 # ----------------Frame Processing-----------------
@@ -166,10 +168,8 @@ while video.isOpened():
     if W is None or H is None:
         (H, W) = frame.shape[:2]
 
-    # masked_img = roi(frame)
-    masked_img = frame
     ###construct a blob from the frame and then perform a forward pass of the YOLO object detector
-    blob = cv2.dnn.blobFromImage(masked_img, 1 / 255.0, (416, 416), swapRB=True, crop=False)
+    blob = cv2.dnn.blobFromImage(frame, 1 / 255.0, (416, 416), swapRB=True, crop=False)
     net.setInput(blob)
     start = time.time()
     layerOutputs = net.forward(ln)
@@ -210,12 +210,18 @@ while video.isOpened():
             ###extract bounding box coords
             (x, y) = (boxes[i][0], boxes[i][1])
             (w, h) = (boxes[i][2], boxes[i][3])
-            bbox = (x, y, w, h)
+            bbox = (x, y, x+w, y+h)
 
             # --------------Color finder----------------
-            kColor = find_color(x, y, w, h, frame)
+            # kColor = find_color(x, y, w, h, frame)
             # print(kColor)
+            # kColor, c_confidence = get_color(bbox, frame)
+            # print(kColor)
+            # print(c_confidence)
+
             # --------------- Tracking detections---------------------
+            # Assigns unique ids and tracks each id
+            # also finds the kit color of the player
             obj = track(x, y, w, h, class_id)
             print(obj['id'])
 
@@ -226,17 +232,17 @@ while video.isOpened():
                                  [-1200, 750]])
 
             ###-------------Draw bounding boxes and labels on frame-----------
-            cv2.ellipse(masked_img,
+            cv2.ellipse(frame,
                         center=(int(x + (w / 2)), (y + h)),
                         axes=(int(w), int(0.35 * w)),
                         angle=0,
                         startAngle=-45,
                         endAngle=235,
-                        color=(0, 255, 0),
+                        color=obj['color'],
                         thickness=thickness)
             if i < len(class_ids):
                 text = f"{obj['id']}"
-            cv2.putText(masked_img, text, (x, y + int(1.5 * h)), cv2.FONT_HERSHEY_SIMPLEX,
+            cv2.putText(frame, text, (x, y + int(1.5 * h)), cv2.FONT_HERSHEY_SIMPLEX,
                         fontScale=font_scale, color=(20, 20, 20), thickness=thickness)
 
     ###check if video writer is None
@@ -244,7 +250,7 @@ while video.isOpened():
         ###initialise the video writer
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(("output/" + filename + "_yolo3." + ext), fourcc, 30,
-                                 (masked_img.shape[1], masked_img.shape[0]))
+                                 (frame.shape[1], frame.shape[0]))
 
         if totalFrame > 0:
             elap = (end - start)
@@ -252,7 +258,7 @@ while video.isOpened():
             print("[INFO] estimated total time to finish: {:.4f}".format(
                 elap * totalFrame))
     ###write the output frame to disk
-    writer.write(masked_img)
+    writer.write(frame)
     print(f'uniqueObjects {uniqueObjects}')
 ###Relsease the file pointers
 writer.release()
