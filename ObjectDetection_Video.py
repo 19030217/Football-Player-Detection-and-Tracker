@@ -111,8 +111,8 @@ def get_color(new_box, frame):
             max_color = (0, 0, 255)
         if max_color == 'black':
             max_color = (0, 0, 0)
-        if max_color == 'None':
-            max_color = (255, 0, 0)
+        if max_color == 'green':
+            max_color = (0, 255, 0)
 
     return max_color, color_confidence
 
@@ -149,6 +149,8 @@ def track(box, class_id):
         uniqueObjects.append(obj)
 
     return obj
+
+
 # -------------- Draws ellipse around detected players feet --------------
 def drawEllipse(frame, bbox, color, thickness):
     x, y, w, h = bbox
@@ -170,12 +172,32 @@ def drawEllipse(frame, bbox, color, thickness):
                 color=color,
                 thickness=thickness)
 
-def drawFrameCount(frame,count):
+
+def drawFrameCount(frame, count):
     # Adding the frame count in the top left of the screen
     cv2.putText(frame, f"Frame Count: {count}", (100, 100), cv2.FONT_HERSHEY_SIMPLEX,
                 fontScale=2, color=(20, 20, 20), thickness=3)
     cv2.putText(frame, f"Frame Count: {count}", (100, 100), cv2.FONT_HERSHEY_SIMPLEX,
                 fontScale=2, color=(20, 20, 20), thickness=3)
+def getMidPoint(contour):
+    # extract the left and right highest points from the combined contour
+    highest_points = sorted(contour, key=lambda x: (x[0][1], x[0][0]))
+    highest_point = tuple(highest_points[0][0])
+
+    midpoint = (highest_points[0][0][0] + highest_points[-1][0][0]) // 2
+    left_highest_points = [pt for pt in highest_points if pt[0][0] <= midpoint]
+    right_highest_points = [pt for pt in highest_points if pt[0][0] > midpoint]
+
+    leftmost_highest_point = tuple(sorted(left_highest_points, key=lambda x: x[0][0])[0][0])
+    rightmost_highest_point = tuple(sorted(right_highest_points, key=lambda x: x[0][0], reverse=True)[0][0])
+
+    if leftmost_highest_point[1] < rightmost_highest_point[1]:
+        mid = highest_point
+    else:
+        mid = leftmost_highest_point
+
+    return mid
+
 def getPitch(im):
     # convert the image to HSV color space
     im_hsv = cv2.cvtColor(im, cv2.COLOR_BGR2HSV)
@@ -188,11 +210,11 @@ def getPitch(im):
     mask = cv2.inRange(im_hsv, lower_green, upper_green)
 
     # apply a morphological opening to the mask to remove small objects
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (10, 10))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (20, 10))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
 
     # find contours in the mask
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    contours, _ = cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
 
     # sort the contours by area in descending order
     sorted_contours = sorted(contours, key=cv2.contourArea, reverse=True)
@@ -205,102 +227,157 @@ def getPitch(im):
         else:
             combined_contour = np.concatenate((combined_contour, contour), axis=0)
 
+    # for contour in sorted_contours[:2]:
+    mid = getMidPoint(contour)
+    # print(f'Mid : {mid}')
     # draw the combined contour on a new image
     im_pitch = im.copy()
     if combined_contour is not None:
-        im_pitch = cv2.drawContours(im_pitch, [combined_contour], -1, (0, 255, 0), 2)
+        # obtain the convex hull of the contour
+        convex_hull = cv2.convexHull(combined_contour)
+        # simplify the convex hull to a polygon approximation
+        epsilon = 0.005 * cv2.arcLength(convex_hull, True)
+        approx = cv2.approxPolyDP(convex_hull, epsilon, True)
 
-        # extract the left and right highest points from the combined contour
-        highest_points = sorted(combined_contour, key=lambda x: (x[0][1], x[0][0]))
-        highest_point = tuple(highest_points[0][0])
-        midpoint = (highest_points[0][0][0] + highest_points[-1][0][0]) // 2
-        left_highest_points = [pt for pt in highest_points if pt[0][0] <= midpoint]
-        right_highest_points = [pt for pt in highest_points if pt[0][0] > midpoint]
+        corners = np.squeeze(approx, axis=1)
+        print(corners.shape)
+        im_pitch = cv2.drawContours(im_pitch, [approx], -1, (0, 0, 255), 3)
 
-        leftmost_highest_point = tuple(sorted(left_highest_points, key=lambda x: x[0][0])[0][0])
-        rightmost_highest_point = tuple(sorted(right_highest_points, key=lambda x: x[0][0], reverse=True)[0][0])
+        corners_list = [tuple(corners[i]) for i in range(corners.shape[0])]
+        # get the top point
+        highest_point = min(corners_list, key=lambda p: p[1])
 
-        im_pitch = cv2.circle(im_pitch, leftmost_highest_point, 20, (0, 0, 255), -1)
-        im_pitch = cv2.circle(im_pitch, rightmost_highest_point, 20, (255, 0, 0), -1)
-        im_pitch = cv2.circle(im_pitch, highest_point, 20, (255, 0, 255), -1)
+        # get the top-left point
+        top_left = min(corners_list, key=lambda p: p[0] + p[1])
 
-        # lowest points
-        lowest_points = sorted(combined_contour, key=lambda x: (-x[0][1], x[0][0]))
-        midpoint = (lowest_points[0][0][0] + lowest_points[-1][0][0]) // 2
-        left_lowest_points = [pt for pt in lowest_points if pt[0][0] <= midpoint]
-        right_lowest_points = [pt for pt in lowest_points if pt[0][0] > midpoint]
+        # get the bottom-left point
+        bottom_left = max(corners_list, key=lambda p: p[1] - p[0])
 
-        leftmost_lowest_point = tuple(sorted(left_lowest_points, key=lambda x: x[0][0])[0][0])
-        rightmost_lowest_point = tuple(sorted(right_lowest_points, key=lambda x: x[0][0], reverse=True)[0][0])
+        # get the bottom-right point
+        bottom_right = max(corners_list, key=lambda p: p[0] + p[1])
 
-        im_pitch = cv2.circle(im_pitch, leftmost_lowest_point, 20, (0, 0, 255), -1)
-        im_pitch = cv2.circle(im_pitch, rightmost_lowest_point, 20, (255, 0, 0), -1)
+        # get the top-right point
+        top_right = max(corners_list, key=lambda p: p[0] - p[1])
 
-        points = np.array([highest_point,
-                           leftmost_highest_point,
-                           rightmost_highest_point,
-                           leftmost_lowest_point,
-                           rightmost_lowest_point], dtype=np.float32)
-    return im_pitch, points
+        # put the corner points in a list in the correct order
+        points = np.float32([[highest_point],
+                             [top_left],
+                             [top_right],
+                             [bottom_left],
+                             [bottom_right]])
+        print(points.shape)
+        im_pitch = cv2.circle(im_pitch, top_left, 35, (255, 255, 100), -1)
+        im_pitch = cv2.circle(im_pitch, bottom_left, 35, (100, 255, 100), -1)
+        im_pitch = cv2.circle(im_pitch, bottom_right, 35, (255, 100, 100), -1)
+        im_pitch = cv2.circle(im_pitch, top_right, 35, (255, 100, 255), -1)
+        im_pitch = cv2.circle(im_pitch, highest_point, 35, (100, 100, 255), -1)
+
+        print(f'Corners: {corners}')
+        print(f'points: {points}')
+
+
+        # # extract the left and right highest points from the combined contour
+        # highest_points = sorted(corners, key=lambda x: (x[0][1], x[0][0]))
+        # highest_point = tuple(highest_points[0][0])
+        # midpoint = (highest_points[0][0][0] + highest_points[-1][0][0]) // 2
+        # left_highest_points = [pt for pt in highest_points if pt[0][0] <= midpoint]
+        # right_highest_points = [pt for pt in highest_points if pt[0][0] > midpoint]
+        #
+        # leftmost_highest_point = tuple(sorted(left_highest_points, key=lambda x: x[0][0])[0][0])
+        # rightmost_highest_point = tuple(sorted(right_highest_points, key=lambda x: x[0][0], reverse=True)[0][0])
+        #
+        # im_pitch = cv2.circle(im_pitch, leftmost_highest_point, 20, (0, 0, 255), -1)
+        # im_pitch = cv2.circle(im_pitch, rightmost_highest_point, 20, (255, 0, 0), -1)
+        # im_pitch = cv2.circle(im_pitch, highest_point, 20, (255, 0, 255), -1)
+        #
+        # im_pitch = cv2.circle(im_pitch, mid, 20, (255, 255, 0), -1)
+        #
+        # # lowest points
+        # lowest_points = sorted(corners, key=lambda x: (-x[0][1], x[0][0]))
+        # midpoint = (lowest_points[0][0][0] + lowest_points[-1][0][0]) // 2
+        # left_lowest_points = [pt for pt in lowest_points if pt[0][0] <= midpoint]
+        # right_lowest_points = [pt for pt in lowest_points if pt[0][0] > midpoint]
+        #
+        # leftmost_lowest_point = tuple(sorted(left_lowest_points, key=lambda x: x[0][0])[0][0])
+        # rightmost_lowest_point = tuple(sorted(right_lowest_points, key=lambda x: x[0][0], reverse=True)[0][0])
+        #
+        # im_pitch = cv2.circle(im_pitch, leftmost_lowest_point, 20, (0, 0, 255), -1)
+        # im_pitch = cv2.circle(im_pitch, rightmost_lowest_point, 20, (255, 0, 0), -1)
+        #
+        # points = np.array([highest_point,
+        #                    leftmost_highest_point,
+        #                    rightmost_highest_point,
+        #                    leftmost_lowest_point,
+        #                    rightmost_lowest_point], dtype=np.float32)
+    return im_pitch, points, mid
 
 
 def euclidean_distance(point1, point2):
-    x1, y1 = point1
-    x2, y2 = point2
-    distance = math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+    x1, y1 = point1[0]
+    x2, y2 = point2[0]
+    distance = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+    print(distance)
     return distance
+
+
 def getSrcPoints(points):
     t, lt, rt, ll, rl = points
     if euclidean_distance(t, lt) < euclidean_distance(t, rt):
         src_lt = t
         src_rt = rt
-    elif euclidean_distance(t, lt) == euclidean_distance(t, rt):
+        coords = np.float32([[60, 29],      # lt
+                         [345, 1170],    # ll
+                         [1300, 1170],  # rl
+                         [1400, 29]])   # rt
+    elif euclidean_distance(t, lt) > euclidean_distance(t, rt):
         src_lt = lt
-        src_rt = rt
-    else:
         src_rt = t
-        src_lt = lt
+        coords = np.float32([[400, 29],  # lt
+                             [700, 1170],  # ll
+                             [1300, 1170],  # rl
+                             [1400, 29]])  # rt
 
     src_pts = np.float32([[src_lt],
                           [ll],
                           [rl],
-                          [src_rt]])
+                          [src_rt]]).reshape(4,2)
+    print(f'src_pints: {src_pts}')
     return src_pts
 
-def getDstPoints(points):
+def getDistance(mid, points):
+    if points[0][0][1] > points[3][0][1]:
+        top_dist = euclidean_distance(mid,points[0])
+        othertop_dist = euclidean_distance(mid, points[3])
+    else:
+        top_dist = euclidean_distance(mid, points[3])
+        othertop_dist = euclidean_distance(mid, points[0])
+
+    dist_factor = othertop_dist / top_dist
+
+    return dist_factor
+def getDstPoints(points, factor):
     lt, ll, rl, rt = points
     print(points)
-    if lt[0][1] > rt[0][1]:
-        #lt == corner
-        dst_lt = (59,26)
-        scale_factor_x = lt[0][0] / 59
-        scale_factor_y = lt[0][1] / 26
-        print("LT")
-        print(lt)
-        print(scale_factor_y)
-        print(scale_factor_x)
-        dst_ll = (ll[0][0] * scale_factor_x, ll[0][1] * scale_factor_y)
-        dst_rl = (rl[0][0] * scale_factor_x, rl[0][1] * scale_factor_y)
-        dst_rt = (rt[0][0] * scale_factor_x, rt[0][1] * scale_factor_y)
-
+    if lt[0][1] < rt[0][1]:
+        dst_lt = (200, 40)
+        dst_rt = (dst_lt[0] + 850 + 850*factor, dst_lt[1])
+        dst_ll = (300, 1170)
+        dst_rl = (dst_ll[0] + 850 + 850*factor, dst_ll[1])
     else:
-        dst_rt = (1753,32)
-        scale_factor_x = rt[0][0] / 1753
-        scale_factor_y = rt[0][1] / 32
-        print("RT")
-        print(rt)
-        print(scale_factor_y)
-        print(scale_factor_x)
-        dst_ll = (ll[0][0] * scale_factor_x, ll[0][1] * scale_factor_y)
-        dst_rl = (rl[0][0] * scale_factor_x, rl[0][1] * scale_factor_y)
-        dst_lt = (lt[0][0] * scale_factor_x, lt[0][1] * scale_factor_y)
+        dst_rt = (1760, 40)
+        dst_lt = (dst_rt[0] - 850 - 850*factor, dst_rt[1])
+        dst_rl = (1600, 1170)
+        dst_ll = (dst_rl[0] - 850 - 850*factor, dst_rl[1])
 
     dst_points = np.float32([[dst_lt],
                              [dst_ll],
                              [dst_rl],
                              [dst_rt]])
+    print(dst_points)
     return dst_points
-def transform(point, src_pts, dst_pts):
+
+
+def transform(point, src_pts, dst_points):
     # Coord from frame
     coord1 = np.float32([[12, 321],  # upper left
                          [1416, 1073],  # bottom left
@@ -312,10 +389,10 @@ def transform(point, src_pts, dst_pts):
                          [1297, 1169],  # bottom right
                          [1753, 29]])  # top right
 
-    coord3 = np.float32([[62,29],
-                         [59,1164],
-                         [1750,1172],
-                         [1762,35]])
+    coord3 = np.float32([[100, 29],      # lt
+                         [345, 1170],    # ll
+                         [1479, 1170],  # rl
+                         [1760, 29]])   # rt
     # Get the tansformation matrix
     transform_matrix = cv2.getPerspectiveTransform(src_pts, coord3)
     # Apply matrix to center point
@@ -354,17 +431,20 @@ while video.isOpened():
     end = time.time()
 
     ###Initialise lists
-    font_scale = 0.6
+    font_scale = 0.8
     thickness = 2
     boxes, confidences, class_ids = [], [], []
 
-    if frameCount % 15 == 0:
+    if frameCount % 12 == 0:
         mask_frame = frame.copy()
-        masked_im, points = getPitch(mask_frame)
+
+        masked_im, points, mid = getPitch(mask_frame)
 
         src_points = getSrcPoints(points)
 
-        dst_points = getDstPoints(src_points)
+        # factor = getDistance(mid, points)
+        #
+        # dst_points = getDstPoints(src_points, factor)
 
     ###loop over each layer of outputs
     for output in layerOutputs:
@@ -396,20 +476,20 @@ while video.isOpened():
         for i in idxs.flatten():
             ###extract bounding box coords
             (x, y) = (boxes[i][0], boxes[i][1])
-            (w, t) = (boxes[i][2], boxes[i][3])
-            bbox = (x, y, w, t)
+            (w, h) = (boxes[i][2], boxes[i][3])
+            bbox = (x, y, w, h)
 
             # --------------- Tracking detections---------------------
             obj = track(bbox, class_id)
             # print(obj['color'])
 
             # --------------- Birds Eye View ------------------
-            centerPoint = np.float32([(x + (w / 2)), (y + t)]).reshape(1, 1, 2)
-            t_point = transform(centerPoint, src_points, dst_points)
+            centerPoint = np.float32([(x + (w / 2)), (y + h)]).reshape(1, 1, 2)
+            t_point = transform(centerPoint, src_points, dst_points = None)
             u, v = t_point[0][0]
 
             # Draw a circle at the transformed point location on the transformed image
-            radius = 10
+            radius = 15
             color = obj['color']
             thicknes = -1
             cv2.circle(output_img, (int(u), int(v)), radius, color, thicknes)
@@ -419,15 +499,16 @@ while video.isOpened():
             # cv2.rectangle(frame, (x, y), (x + w, y + h), color=(255,0,0), thickness=thickness)
 
             # Adding the frame count in the top left of the screen
-            drawFrameCount(frame,frameCount)
-            drawFrameCount(output_img,frameCount)
+            drawFrameCount(frame, frameCount)
+            drawFrameCount(output_img, frameCount)
 
             # writing the ID for each object
             if i < len(class_ids):
                 text = f"{obj['id']}"
-            cv2.putText(frame, text, (x, y + int(1.5 * t)), cv2.FONT_HERSHEY_SIMPLEX,
+            cv2.putText(frame, text, (x, y + int(1.8 * h)), cv2.FONT_HERSHEY_SIMPLEX,
                         fontScale=font_scale, color=(20, 20, 20), thickness=thickness)
-
+            cv2.putText(output_img, text, (int(u), int(v) + int(h)), cv2.FONT_HERSHEY_SIMPLEX,
+                        fontScale=font_scale, color=(20, 20, 20), thickness=thickness)
     ###check if video writer is None
     if writer is None and writer2 is None and writer3 is None and writer4 is None:
         ###initialise the video writer
@@ -437,7 +518,7 @@ while video.isOpened():
                                  (frame.shape[1], frame.shape[0]))
         # writer for transformed output image
         writer2 = cv2.VideoWriter(("output/" + filename + "_transformed." + ext), fourcc, 30,
-                                 (output_img.shape[1], output_img.shape[0]))
+                                  (output_img.shape[1], output_img.shape[0]))
         # writer for pitch lines
         # writer3 = cv2.VideoWriter(("output/" + filename + "_contours." + ext), fourcc, 30,
         #                           (im.shape[1], im.shape[0]))
@@ -458,6 +539,6 @@ while video.isOpened():
 ###Relsease the file pointers
 writer.release()
 writer2.release()
-writer3.release()
+# writer3.release()
 writer4.release()
 video.release()
