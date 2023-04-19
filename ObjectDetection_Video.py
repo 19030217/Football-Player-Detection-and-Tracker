@@ -17,7 +17,6 @@ ln = net.getLayerNames()
 try:
     ln = [ln[i[0] - 1] for i in net.getUnconnectedOutLayers()]
 except IndexError:
-    # Incase getUnconnectedOutLayers() returns 1D array when CUDA isn't available
     ln = [ln[i - 1] for i in net.getUnconnectedOutLayers()]
 
 # ----------------Video Specific tasks-----------------------
